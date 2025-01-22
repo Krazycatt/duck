@@ -34,6 +34,9 @@ Set-ItemProperty -Path $RegPath -Name Settings -Value $RegKey
 Stop-Process -Name explorer -Force
 Start-Process explorer
 
+# Wait 3 seconds
+Start-Sleep -Seconds 3
+
 # Minimize all windows
 $shell = New-Object -ComObject "Shell.Application"
 $shell.MinimizeAll()
