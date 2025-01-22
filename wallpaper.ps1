@@ -16,8 +16,18 @@ public class Win32 {
 
 Add-Type -TypeDefinition $code
 
-# Kill Wallpaper Engine processes
-Get-Process | Where-Object {$_.ProcessName -like "*wallpaper*"} | Stop-Process -Force -ErrorAction SilentlyContinue
+# Kill specific Wallpaper Engine processes
+$processNames = @(
+    "wallpaper64",
+    "wallpaper32",
+    "webwallpaper64",
+    "webwallpaper32",
+    "wallpaperservice32"
+)
+
+foreach ($processName in $processNames) {
+    Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
+}
 Start-Sleep -Seconds 2
 
 # Download BSOD image
@@ -38,9 +48,11 @@ Set-ItemProperty -Path $RegPath -Name Settings -Value $RegKey
 Stop-Process -Name explorer -Force
 Start-Process explorer
 
-# Wait 6 seconds and kill WE again if it relaunched
+# Wait 6 seconds and kill specific processes again if they relaunched
 Start-Sleep -Seconds 6
-Get-Process | Where-Object {$_.ProcessName -like "*wallpaper*"} | Stop-Process -Force -ErrorAction SilentlyContinue
+foreach ($processName in $processNames) {
+    Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
+}
 
 # Minimize all windows
 $shell = New-Object -ComObject "Shell.Application"
