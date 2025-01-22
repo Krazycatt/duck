@@ -16,6 +16,10 @@ public class Win32 {
 
 Add-Type -TypeDefinition $code
 
+# Kill webwallpaper32.exe specifically
+Stop-Process -Name "webwallpaper32" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
 # Download BSOD image
 $imageUrl = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
 $imagePath = "$env:USERPROFILE\Downloads\bsod.png"
