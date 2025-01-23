@@ -31,7 +31,7 @@ foreach ($processName in $processNames) {
 Start-Sleep -Seconds 2
 
 # Download BSOD image
-$imageUrl = ""https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png
+$imageUrl = "https://www.pixground.com/wp-content/uploads/2023/10/Blue-Screen-Of-Death-BSoD-4K-Wallpaper.png"
 $imagePath = "$env:USERPROFILE\Downloads\bsod.png"
 (New-Object System.Net.WebClient).DownloadFile($imageUrl, $imagePath)
 
