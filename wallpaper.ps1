@@ -1,68 +1,42 @@
-###############################################################################
-# C# code to create a hidden form that triggers restore on mouse movement
-###############################################################################
-$code = @'
+# Requires .NET for pinvoke
+Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-using System.Windows.Forms;
 
-public class Win32 {
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-}
-
-public class MouseMoveForm : Form
+public static class WinAPI
 {
-    private Action _restoreAction;
-    private bool _restored = false;
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    public MouseMoveForm(Action restoreAction)
-    {
-        _restoreAction = restoreAction;
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
-        // Make a borderless, topmost, (almost) invisible form
-        this.FormBorderStyle = FormBorderStyle.None;
-        this.WindowState = FormWindowState.Maximized; // covers the whole primary screen
-        this.TopMost = true;
-        this.ShowInTaskbar = false;
-        
-        // Setting Opacity to 0.01 so we can still receive mouse events
-        this.Opacity = 0.01;
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
 
-        // Subscribe to the MouseMove event
-        this.MouseMove += new MouseEventHandler(Form_MouseMove);
-    }
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
-    private void Form_MouseMove(object sender, MouseEventArgs e)
-    {
-        if (!_restored)
-        {
-            _restored = true;
-            _restoreAction();
-            Application.Exit();
-        }
-    }
+    // SW_MINIMIZE = 6
+    public const int SW_MINIMIZE = 6;
 }
-'@
-
-Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
+"@
 
 ###############################################################################
-# 1. Capture Current Settings
+# 1. CAPTURE CURRENT SETTINGS
 ###############################################################################
-Write-Host "Capturing current wallpaper/registry settings..."
+Write-Host "Capturing current user wallpaper and registry settings..."
 
-# The user’s current wallpaper path is stored here:
-$originalWallpaper = (Get-ItemProperty "HKCU:\Control Panel\Desktop").WallPaper
+# Current wallpaper (stored in HKCU:\Control Panel\Desktop)
+$originalWallpaper = (Get-ItemProperty "HKCU:\Control Panel\Desktop").Wallpaper
 
 # HideIcons
-$hideIconsPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$hideIconsPath  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 $originalHideIcons = (Get-ItemProperty -Path $hideIconsPath -Name "HideIcons" -ErrorAction SilentlyContinue).HideIcons
 
 # NoDesktop
 $policiesPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-if (!(Test-Path $policiesPath)) {
-    New-Item -Path $policiesPath | Out-Null
+if (!(Test-Path $policiesPath)) { 
+    New-Item -Path $policiesPath | Out-Null 
 }
 $originalNoDesktop = (Get-ItemProperty -Path $policiesPath -Name "NoDesktop" -ErrorAction SilentlyContinue).NoDesktop
 
@@ -70,87 +44,85 @@ $originalNoDesktop = (Get-ItemProperty -Path $policiesPath -Name "NoDesktop" -Er
 $stuckRectsPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
 $originalStuckRects = (Get-ItemProperty -Path $stuckRectsPath -Name "Settings" -ErrorAction SilentlyContinue).Settings
 
-Write-Host "Original Wallpaper: $originalWallpaper"
-Write-Host "Original HideIcons: $originalHideIcons"
-Write-Host "Original NoDesktop: $originalNoDesktop"
-Write-Host "Original StuckRects3: $($originalStuckRects -join ',')"
+Write-Host "Original Wallpaper:  $originalWallpaper"
+Write-Host "Original HideIcons:  $originalHideIcons"
+Write-Host "Original NoDesktop:  $originalNoDesktop"
+Write-Host "Original StuckRects: $($originalStuckRects -join ',')"
 
 ###############################################################################
-# 2. Define function to hide everything (the 'prank' part)
+# 2. DEFINE PRANK FUNCTION
 ###############################################################################
 function Invoke-Prank {
-    # (Optional) Kill known Wallpaper Engine processes
-    $processNames = @(
-        "wallpaper64",
-        "wallpaper32",
-        "webwallpaper64",
-        "webwallpaper32",
-        "wallpaperservice32"
-    )
+    Write-Host "`n--- PRANK: Hiding icons, setting fake BSOD... ---`n"
 
-    foreach ($processName in $processNames) {
-        Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
+    # Optionally kill Wallpaper Engine processes
+    $processNames = @("wallpaper64","wallpaper32","webwallpaper64","webwallpaper32","wallpaperservice32")
+    foreach ($name in $processNames) {
+        Stop-Process -Name $name -Force -ErrorAction SilentlyContinue
     }
-
-    Start-Sleep -Seconds 1
+    Start-Sleep 1
 
     # Hide desktop icons
     Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value 1
 
-    # Disable desktop
+    # Disable the desktop
     Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value 1
 
-    # Download Fake BSOD
+    # Download a fake BSOD image
     $fakeBSODUrl = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
-    $bsodImagePath = "$env:USERPROFILE\Downloads\bsod.png"
+    $bsodImagePath = "$env:USERPROFILE\Downloads\fake_bsod.png"
     try {
         (New-Object System.Net.WebClient).DownloadFile($fakeBSODUrl, $bsodImagePath)
     } catch {
-        Write-Host "Failed to download BSOD image: $($_.Exception.Message)"
+        Write-Host "Error downloading BSOD image: $($_.Exception.Message)"
     }
 
-    # Set wallpaper to fake BSOD
-    [Win32]::SystemParametersInfo(0x14, 0, $bsodImagePath, 0x1 -bor 0x2)
+    # Set wallpaper to the fake BSOD
+    # SPI_SETDESKWALLPAPER = 0x14, SPIF_UPDATEINIFILE(0x1) + SPIF_SENDWININICHANGE(0x2)
+    [WinAPI]::SystemParametersInfo(0x14, 0, $bsodImagePath, 0x1 -bor 0x2) | Out-Null
 
-    # Hide taskbar
+    # Hide the taskbar via StuckRects3
+    # Typically byte index [8] = 3 => autohide/hide, 2 => normal
     if ($originalStuckRects) {
-        # Copy the original array so we only change the index we need
-        $newStuckRects = [byte[]]::new($originalStuckRects.Length)
+        $newStuckRects = New-Object byte[] ($originalStuckRects.Length)
         $originalStuckRects.CopyTo($newStuckRects, 0)
-
-        # Typically byte index 8 controls taskbar autohide/show:
-        # 2 => normal, 3 => hide
         $newStuckRects[8] = 3
         Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $newStuckRects
     } else {
-        # If not found, do a naive approach
+        # If not found, read the current, tweak it
         $regKey = (Get-ItemProperty -Path $stuckRectsPath).Settings
         $regKey[8] = 3
         Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
     }
 
-    # Restart Explorer
+    # Restart Explorer to apply changes
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer
+    Start-Sleep 1
 
-    # Minimize all windows (optional)
-    Start-Sleep -Seconds 1
-    $shell = New-Object -ComObject "Shell.Application"
-    $shell.MinimizeAll()
+    # Force-minimize all visible windows using EnumWindows + ShowWindow(SW_MINIMIZE)
+    [WinAPI]::EnumWindows({
+        param($hWnd, $lParam)
+
+        if ([WinAPI]::IsWindowVisible($hWnd)) {
+            # 6 = SW_MINIMIZE
+            [WinAPI]::ShowWindow($hWnd, [WinAPI]::SW_MINIMIZE) | Out-Null
+        }
+        return $true
+    }, [IntPtr]::Zero)
 }
 
 ###############################################################################
-# 3. Define function to restore everything
+# 3. DEFINE RESTORE FUNCTION
 ###############################################################################
 function Restore-System {
-    try {
-        Write-Host "Restoring old settings..."
+    Write-Host "`n--- RESTORING: Original wallpaper, icons, taskbar... ---`n"
 
+    try {
         # Restore HideIcons
         if ($originalHideIcons -ne $null) {
             Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value $originalHideIcons
         } else {
-            # If not found, default to 0
             Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value 0
         }
 
@@ -158,37 +130,33 @@ function Restore-System {
         if ($originalNoDesktop -ne $null) {
             Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value $originalNoDesktop
         } else {
-            # If not found, default to 0
             Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value 0
         }
 
-        # Restore original wallpaper
+        # Restore original wallpaper, if it still exists
         if ($originalWallpaper -and (Test-Path $originalWallpaper)) {
-            [Win32]::SystemParametersInfo(0x14, 0, $originalWallpaper, 0x1 -bor 0x2)
-        } else {
-            # If the old file doesn't exist for some reason, you could:
-            # 1) do nothing, or
-            # 2) set a fallback wallpaper
-            Write-Host "Original wallpaper file not found, using fallback wallpaper..."
-
-            $fallbackUrl = "https://wallpapercave.com/wp/wp10128604.jpg" # Windows-like default
-            $fallbackPath = "$env:USERPROFILE\Downloads\normal.jpg"
+            [WinAPI]::SystemParametersInfo(0x14, 0, $originalWallpaper, 0x1 -bor 0x2) | Out-Null
+        }
+        else {
+            # Fallback to an online default or do nothing
+            Write-Host "Original wallpaper not found, using fallback..."
+            $fallbackUrl = "https://wallpapercave.com/wp/wp10128604.jpg" 
+            $fallbackPath = "$env:USERPROFILE\Downloads\restoredWallpaper.jpg"
             (New-Object System.Net.WebClient).DownloadFile($fallbackUrl, $fallbackPath)
-            [Win32]::SystemParametersInfo(0x14, 0, $fallbackPath, 0x1 -bor 0x2)
+            [WinAPI]::SystemParametersInfo(0x14, 0, $fallbackPath, 0x1 -bor 0x2) | Out-Null
         }
 
-        # Restore taskbar (StuckRects3)
+        # Restore taskbar
         if ($originalStuckRects) {
-            # Revert to the original array
             Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $originalStuckRects
         } else {
-            # If we had no original, default to '2' (shown)
+            # If no original, default to '2' (show)
             $regKey = (Get-ItemProperty -Path $stuckRectsPath).Settings
             $regKey[8] = 2
             Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
         }
 
-        # Restart Explorer to apply changes
+        # Restart Explorer
         Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
         Start-Process explorer
 
@@ -200,13 +168,24 @@ function Restore-System {
 }
 
 ###############################################################################
-# 4. Actually run the prank
+# 4. RUN THE PRANK
 ###############################################################################
 Invoke-Prank
 
 ###############################################################################
-# 5. Create the invisible form that will restore on mouse movement
+# 5. WAIT FOR MOUSE MOVEMENT, THEN RESTORE
 ###############################################################################
-$restoreDelegate = [System.Action] { Restore-System }
-$form = New-Object MouseMoveForm($restoreDelegate)
-[System.Windows.Forms.Application]::Run($form)
+Write-Host "Prank active. Move your mouse to restore..."
+
+Add-Type -AssemblyName System.Windows.Forms  # for Cursor/MousePosition
+$oldPos = [System.Windows.Forms.Cursor]::Position
+
+while ($true) {
+    Start-Sleep -Milliseconds 500
+    $newPos = [System.Windows.Forms.Cursor]::Position
+    if (($newPos.X -ne $oldPos.X) -or ($newPos.Y -ne $oldPos.Y)) {
+        # Mouse moved
+        Restore-System
+        break
+    }
+}
