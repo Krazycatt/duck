@@ -1,5 +1,5 @@
 ###############################################################################
-# 1) C# code for invisible form that triggers "Restore-System" on mouse move
+# C# code: a single form that listens for mouse movement twice
 ###############################################################################
 $code = @'
 using System;
@@ -11,31 +11,47 @@ public class Win32 {
     public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 }
 
-public class MouseForm : Form
+public class TwoStepMouseForm : Form
 {
-    private readonly Action _restoreAction;
-    private bool _restored = false;
+    private Action _prankAction;
+    private Action _restoreAction;
+    
+    private bool didPrank   = false;
+    private bool didRestore = false;
 
-    public MouseForm(Action restoreAction)
+    public TwoStepMouseForm(Action prankAction, Action restoreAction)
     {
+        _prankAction = prankAction;
         _restoreAction = restoreAction;
 
-        // Fullscreen, topmost, nearly invisible window
+        // Fullscreen, topmost, nearly invisible form
         this.FormBorderStyle = FormBorderStyle.None;
         this.WindowState = FormWindowState.Maximized;
         this.TopMost = true;
         this.ShowInTaskbar = false;
-        this.Opacity = 0.01; // Must be >0 for mouse events
 
-        // Trigger restore when mouse moves anywhere in this form
+        // Must be > 0 to receive mouse events
+        this.Opacity = 0.01;
+
+        // When mouse moves, we either do the prank (1st time)
+        // or restore (2nd time).
         this.MouseMove += new MouseEventHandler(Form_MouseMove);
     }
 
     private void Form_MouseMove(object sender, MouseEventArgs e)
     {
-        if (!_restored)
+        // 1st mouse move => do the prank
+        if (!didPrank)
         {
-            _restored = true;
+            didPrank = true;
+            _prankAction?.Invoke();
+            return;
+        }
+
+        // 2nd mouse move => do the restore, then exit
+        if (!didRestore)
+        {
+            didRestore = true;
             _restoreAction?.Invoke();
             Application.Exit();
         }
@@ -45,32 +61,23 @@ public class MouseForm : Form
 Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
 
 ###############################################################################
-# 2) PRANK: Hide Icons, Fake BSOD, Hide Taskbar
+# PRANK ACTION: Hide icons, BSOD wallpaper, hide taskbar, minimize windows
 ###############################################################################
 function Invoke-Prank {
-    # 2.1) Kill Wallpaper Engine (optional)
-    $processNames = @("wallpaper64","wallpaper32","webwallpaper64","webwallpaper32","wallpaperservice32")
-    foreach ($proc in $processNames) {
-        Stop-Process -Name $proc -Force -ErrorAction SilentlyContinue
-    }
-    Start-Sleep 1
+    Write-Host "`n--- PRANK: Setting BSOD, hiding icons/taskbar... ---`n"
 
-    # 2.2) Hide desktop icons (HideIcons=1)
+    # 1) Hide desktop icons (HideIcons=1)
     $regPathIcons = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
     Set-ItemProperty -Path $regPathIcons -Name "HideIcons" -Value 1 -ErrorAction SilentlyContinue
 
-    # 2.3) Download & set Fake BSOD wallpaper
-    $fakeUrl = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
-    $fakePath = "$env:USERPROFILE\Downloads\bsod.png"
-    try {
-        (New-Object System.Net.WebClient).DownloadFile($fakeUrl, $fakePath)
-    } catch {
-        Write-Host "BSOD image download failed: $($_.Exception.Message)"
-    }
+    # 2) Download & set Fake BSOD wallpaper
+    $bsodUrl  = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
+    $bsodPath = "$env:USERPROFILE\Downloads\bsod.png"
+    (New-Object System.Net.WebClient).DownloadFile($bsodUrl, $bsodPath)
 
-    [Win32]::SystemParametersInfo(0x14, 0, $fakePath, 0x1 -bor 0x2) | Out-Null
+    [Win32]::SystemParametersInfo(0x14, 0, $bsodPath, 0x1 -bor 0x2) | Out-Null
 
-    # 2.4) Hide the taskbar (StuckRects3 => [8] = 3)
+    # 3) Hide taskbar (StuckRects3 => [8] = 3)
     $stuckRects = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
     $srData = (Get-ItemProperty -Path $stuckRects -ErrorAction SilentlyContinue).Settings
     if ($srData) {
@@ -78,38 +85,35 @@ function Invoke-Prank {
         Set-ItemProperty -Path $stuckRects -Name Settings -Value $srData -ErrorAction SilentlyContinue
     }
 
-    # 2.5) Restart Explorer
+    # 4) Restart Explorer
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer
     Start-Sleep 1
 
-    # 2.6) Minimize all windows
+    # 5) Minimize all windows (original method)
     $shell = New-Object -ComObject "Shell.Application"
     $shell.MinimizeAll()
 }
 
 ###############################################################################
-# 3) RESTORE: Show Icons, Normal Wallpaper, Show Taskbar
+# RESTORE ACTION: Show icons, normal wallpaper, show taskbar
 ###############################################################################
 function Restore-System {
-    Write-Host "Restoring system..."
+    Write-Host "`n--- RESTORE: Normal wallpaper, icons, taskbar... ---`n"
 
-    # 3.1) Show desktop icons (HideIcons=0)
+    # 1) Show desktop icons (HideIcons=0)
     $regPathIcons = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
     Set-ItemProperty -Path $regPathIcons -Name "HideIcons" -Value 0 -ErrorAction SilentlyContinue
 
-    # 3.2) Download & set normal wallpaper
-    $normalUrl = "https://wallpapercave.com/wp/wp10128604.jpg"
+    # 2) Download & set normal wallpaper
+    #    (the "Windows-like" background you mentioned)
+    $normalUrl  = "https://wallpapercave.com/wp/wp10128604.jpg"
     $normalPath = "$env:USERPROFILE\Downloads\normal.jpg"
-    try {
-        (New-Object System.Net.WebClient).DownloadFile($normalUrl, $normalPath)
-    } catch {
-        Write-Host "Normal wallpaper download failed: $($_.Exception.Message)"
-    }
+    (New-Object System.Net.WebClient).DownloadFile($normalUrl, $normalPath)
 
     [Win32]::SystemParametersInfo(0x14, 0, $normalPath, 0x1 -bor 0x2) | Out-Null
 
-    # 3.3) Show the taskbar (StuckRects3 => [8] = 2)
+    # 3) Show taskbar (StuckRects3 => [8] = 2)
     $stuckRects = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
     $srData = (Get-ItemProperty -Path $stuckRects -ErrorAction SilentlyContinue).Settings
     if ($srData) {
@@ -117,18 +121,18 @@ function Restore-System {
         Set-ItemProperty -Path $stuckRects -Name Settings -Value $srData -ErrorAction SilentlyContinue
     }
 
-    # 3.4) Restart Explorer
+    # 4) Restart Explorer
     Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
     Start-Process explorer
-
     Write-Host "Restore complete."
 }
 
 ###############################################################################
-# 4) RUN THE PRANK, THEN WAIT FOR MOUSE MOVE
+# MAIN LOGIC
 ###############################################################################
-Invoke-Prank
-
-$restoreDelegate = [System.Action] { Restore-System }
-$form = New-Object MouseForm($restoreDelegate)
+Write-Host "`nScript loaded. Move mouse ONCE to apply the FAKE BSOD, move mouse AGAIN to RESTORE.`n"
+# We create the form that has two steps:
+# - First mouse move => PRANK
+# - Second mouse move => RESTORE
+$form = New-Object TwoStepMouseForm ([System.Action] { Invoke-Prank }) ([System.Action] { Restore-System })
 [System.Windows.Forms.Application]::Run($form)
