@@ -1,3 +1,6 @@
+###############################################################################
+# C# code to create a hidden form that triggers restore on mouse movement
+###############################################################################
 $code = @'
 using System;
 using System.Runtime.InteropServices;
@@ -6,40 +9,36 @@ using System.Windows.Forms;
 public class Win32 {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-    
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 }
 
-public class KeyHandler : Form
+public class MouseMoveForm : Form
 {
-    // We'll store references to the revert method from PowerShell
     private Action _restoreAction;
+    private bool _restored = false;
 
-    public KeyHandler(Action restoreAction)
+    public MouseMoveForm(Action restoreAction)
     {
         _restoreAction = restoreAction;
 
-        this.WindowState = FormWindowState.Minimized;
+        // Make a borderless, topmost, (almost) invisible form
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.WindowState = FormWindowState.Maximized; // covers the whole primary screen
+        this.TopMost = true;
         this.ShowInTaskbar = false;
-        this.Opacity = 0;
+        
+        // Setting Opacity to 0.01 so we can still receive mouse events
+        this.Opacity = 0.01;
 
-        this.KeyPreview = true;
-        this.KeyDown += new KeyEventHandler(Form_KeyDown);
+        // Subscribe to the MouseMove event
+        this.MouseMove += new MouseEventHandler(Form_MouseMove);
     }
 
-    private void Form_KeyDown(object sender, KeyEventArgs e)
+    private void Form_MouseMove(object sender, MouseEventArgs e)
     {
-        if (e.Control && e.KeyCode == Keys.F)
+        if (!_restored)
         {
-            // Call the restore action from PowerShell
-            if (_restoreAction != null) {
-                _restoreAction();
-            }
-            
+            _restored = true;
+            _restoreAction();
             Application.Exit();
         }
     }
@@ -48,10 +47,12 @@ public class KeyHandler : Form
 
 Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
 
+###############################################################################
 # 1. Capture Current Settings
+###############################################################################
 Write-Host "Capturing current wallpaper/registry settings..."
 
-# The user’s current wallpaper path is often stored here:
+# The user’s current wallpaper path is stored here:
 $originalWallpaper = (Get-ItemProperty "HKCU:\Control Panel\Desktop").WallPaper
 
 # HideIcons
@@ -74,7 +75,9 @@ Write-Host "Original HideIcons: $originalHideIcons"
 Write-Host "Original NoDesktop: $originalNoDesktop"
 Write-Host "Original StuckRects3: $($originalStuckRects -join ',')"
 
+###############################################################################
 # 2. Define function to hide everything (the 'prank' part)
+###############################################################################
 function Invoke-Prank {
     # (Optional) Kill known Wallpaper Engine processes
     $processNames = @(
@@ -111,16 +114,16 @@ function Invoke-Prank {
 
     # Hide taskbar
     if ($originalStuckRects) {
-        # Copy original array so we only change the index we need
+        # Copy the original array so we only change the index we need
         $newStuckRects = [byte[]]::new($originalStuckRects.Length)
         $originalStuckRects.CopyTo($newStuckRects, 0)
 
-        # Typically byte index 8 changes taskbar autohide or show:
+        # Typically byte index 8 controls taskbar autohide/show:
         # 2 => normal, 3 => hide
         $newStuckRects[8] = 3
         Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $newStuckRects
     } else {
-        # If not found, do a default approach
+        # If not found, do a naive approach
         $regKey = (Get-ItemProperty -Path $stuckRectsPath).Settings
         $regKey[8] = 3
         Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
@@ -130,13 +133,15 @@ function Invoke-Prank {
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer
 
-    # Minimize all windows
+    # Minimize all windows (optional)
     Start-Sleep -Seconds 1
     $shell = New-Object -ComObject "Shell.Application"
     $shell.MinimizeAll()
 }
 
+###############################################################################
 # 3. Define function to restore everything
+###############################################################################
 function Restore-System {
     try {
         Write-Host "Restoring old settings..."
@@ -145,7 +150,7 @@ function Restore-System {
         if ($originalHideIcons -ne $null) {
             Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value $originalHideIcons
         } else {
-            # In case nothing was found, default to 0
+            # If not found, default to 0
             Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value 0
         }
 
@@ -153,7 +158,7 @@ function Restore-System {
         if ($originalNoDesktop -ne $null) {
             Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value $originalNoDesktop
         } else {
-            # default to 0 if not found
+            # If not found, default to 0
             Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value 0
         }
 
@@ -163,19 +168,18 @@ function Restore-System {
         } else {
             # If the old file doesn't exist for some reason, you could:
             # 1) do nothing, or
-            # 2) set a built-in Windows default wallpaper
-            Write-Host "Original wallpaper path not found or doesn't exist. Using fallback."
-            
-            # Example fallback
-            $fallbackUrl = "https://wallpapercave.com/wp/wp10128604.jpg"
+            # 2) set a fallback wallpaper
+            Write-Host "Original wallpaper file not found, using fallback wallpaper..."
+
+            $fallbackUrl = "https://wallpapercave.com/wp/wp10128604.jpg" # Windows-like default
             $fallbackPath = "$env:USERPROFILE\Downloads\normal.jpg"
             (New-Object System.Net.WebClient).DownloadFile($fallbackUrl, $fallbackPath)
             [Win32]::SystemParametersInfo(0x14, 0, $fallbackPath, 0x1 -bor 0x2)
         }
 
-        # Restore taskbar
+        # Restore taskbar (StuckRects3)
         if ($originalStuckRects) {
-            # Simply revert to the original array
+            # Revert to the original array
             Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $originalStuckRects
         } else {
             # If we had no original, default to '2' (shown)
@@ -184,10 +188,8 @@ function Restore-System {
             Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
         }
 
-        # Restart Explorer
-        foreach ($p in (Get-Process explorer -ErrorAction SilentlyContinue)) {
-            $p.Kill()
-        }
+        # Restart Explorer to apply changes
+        Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
         Start-Process explorer
 
         Write-Host "Restore complete."
@@ -197,10 +199,14 @@ function Restore-System {
     }
 }
 
-# 4. Actually run the prank now
+###############################################################################
+# 4. Actually run the prank
+###############################################################################
 Invoke-Prank
 
-# 5. Create the form with the restore callback
+###############################################################################
+# 5. Create the invisible form that will restore on mouse movement
+###############################################################################
 $restoreDelegate = [System.Action] { Restore-System }
-$form = New-Object KeyHandler($restoreDelegate)
+$form = New-Object MouseMoveForm($restoreDelegate)
 [System.Windows.Forms.Application]::Run($form)
