@@ -24,7 +24,6 @@ function Wait-ForMouseMovement {
     Add-Type -AssemblyName System.Windows.Forms
     $originalPos = [System.Windows.Forms.Cursor]::Position
 
-    Write-Host "Waiting for mouse movement..."
     while ($true) {
         Start-Sleep -Seconds 1
         $currentPos = [System.Windows.Forms.Cursor]::Position
@@ -32,7 +31,6 @@ function Wait-ForMouseMovement {
             break
         }
     }
-    Write-Host "Mouse movement detected!"
 }
 
 ##############################################################################
@@ -47,12 +45,6 @@ using System.Runtime.InteropServices;
 public class Win32 {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-    
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 }
 "@
     Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
@@ -87,31 +79,31 @@ public class Win32 {
     # 0x0014 = SPI_SETDESKWALLPAPER
     # 0x1 | 0x2 = Update registry + send to all windows
 
-    # -- 3E) Hide Taskbar
+    # -- 3E) Hide Taskbar (StuckRects3 registry tweak)
     $RegPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
     $RegKey = (Get-ItemProperty -Path $RegPath).Settings
-    $RegKey[8] = 3  # 3 = hide
+    $RegKey[8] = 3  # 3 = Hide
     Set-ItemProperty -Path $RegPath -Name Settings -Value $RegKey
 
-    # -- 3F) Restart Explorer to Apply Changes
+    # -- 3F) Restart Explorer so wallpaper/taskbar changes apply immediately
     Stop-Process -Name explorer -Force
     Start-Process explorer
 
-    # -- 3G) Final kill of the processes if they relaunch after a few seconds
-    Start-Sleep -Seconds 6
-    foreach ($processName in $processNames) {
-        Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
-    }
-
-    # -- 3H) Minimize all windows
+    # -- 3G) Minimize all windows - first attempt
     $shell = New-Object -ComObject "Shell.Application"
+    $shell.MinimizeAll()
+
+    # -- 3H) Wait a few seconds
+    Start-Sleep -Seconds 5
+
+    # -- 3I) Try again to ensure everything is minimized
     $shell.MinimizeAll()
 
     Write-Host "Prank (fake BSOD) is now active."
 }
 
 ##############################################################################
-# 4) Define the RESTORE script
+# 4) Define the RESTORE script (NO Explorer restart)
 ##############################################################################
 function Stop-Prank {
     # Provide .NET Interop for SystemParametersInfo again (if needed)
@@ -131,7 +123,6 @@ public class Win32 {
     Set-ItemProperty -Path $Path -Name "HideIcons" -Value 0
 
     $Path2 = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-    # In case we used NoDesktop=1, revert it:
     if (Test-Path $Path2) {
         Set-ItemProperty -Path $Path2 -Name "NoDesktop" -Value 0 -ErrorAction SilentlyContinue
     }
@@ -144,17 +135,13 @@ public class Win32 {
     # -- 4C) Set it as wallpaper
     [Win32]::SystemParametersInfo(0x0014, 0, $imagePath, 0x01 -bor 0x02)
 
-    # -- 4D) Show Taskbar
+    # -- 4D) Show Taskbar (but do NOT restart Explorer)
     $RegPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
     $RegKey = (Get-ItemProperty -Path $RegPath).Settings
-    $RegKey[8] = 2  # 2 = show
+    $RegKey[8] = 2  # 2 = Show
     Set-ItemProperty -Path $RegPath -Name Settings -Value $RegKey
 
-    # -- 4E) Restart Explorer to apply
-    Stop-Process -Name explorer -Force
-    Start-Process explorer
-
-    Write-Host "System restored to normal wallpaper and taskbar visible."
+    Write-Host "System restored to normal wallpaper and taskbar visible (no Explorer restart)."
 }
 
 ##############################################################################
