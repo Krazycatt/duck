@@ -1,191 +1,158 @@
-# Requires .NET for pinvoke
-Add-Type -TypeDefinition @"
+$code = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
-public static class WinAPI
-{
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
-
+public class Win32 {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+    
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-    // SW_MINIMIZE = 6
-    public const int SW_MINIMIZE = 6;
+    
+    [DllImport("user32.dll")]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 }
-"@
 
-###############################################################################
-# 1. CAPTURE CURRENT SETTINGS
-###############################################################################
-Write-Host "Capturing current user wallpaper and registry settings..."
+public class MouseHandler : Form
+{
+    private static bool isRestored = false;
 
-# Current wallpaper (stored in HKCU:\Control Panel\Desktop)
-$originalWallpaper = (Get-ItemProperty "HKCU:\Control Panel\Desktop").Wallpaper
+    public MouseHandler()
+    {
+        // Make a borderless, topmost, nearly invisible form that covers the entire screen
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.WindowState = FormWindowState.Maximized;
+        this.TopMost = true;
+        this.ShowInTaskbar = false;
+        
+        // Opacity must be > 0 to capture mouse events. 0.01 is effectively invisible
+        this.Opacity = 0.01;
 
-# HideIcons
-$hideIconsPath  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-$originalHideIcons = (Get-ItemProperty -Path $hideIconsPath -Name "HideIcons" -ErrorAction SilentlyContinue).HideIcons
-
-# NoDesktop
-$policiesPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-if (!(Test-Path $policiesPath)) { 
-    New-Item -Path $policiesPath | Out-Null 
-}
-$originalNoDesktop = (Get-ItemProperty -Path $policiesPath -Name "NoDesktop" -ErrorAction SilentlyContinue).NoDesktop
-
-# Taskbar settings in StuckRects3
-$stuckRectsPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
-$originalStuckRects = (Get-ItemProperty -Path $stuckRectsPath -Name "Settings" -ErrorAction SilentlyContinue).Settings
-
-Write-Host "Original Wallpaper:  $originalWallpaper"
-Write-Host "Original HideIcons:  $originalHideIcons"
-Write-Host "Original NoDesktop:  $originalNoDesktop"
-Write-Host "Original StuckRects: $($originalStuckRects -join ',')"
-
-###############################################################################
-# 2. DEFINE PRANK FUNCTION
-###############################################################################
-function Invoke-Prank {
-    Write-Host "`n--- PRANK: Hiding icons, setting fake BSOD... ---`n"
-
-    # Optionally kill Wallpaper Engine processes
-    $processNames = @("wallpaper64","wallpaper32","webwallpaper64","webwallpaper32","wallpaperservice32")
-    foreach ($name in $processNames) {
-        Stop-Process -Name $name -Force -ErrorAction SilentlyContinue
+        // We'll use MouseMove to trigger restoration
+        this.MouseMove += new MouseEventHandler(Form_MouseMove);
     }
-    Start-Sleep 1
+
+    private void Form_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!isRestored)
+        {
+            isRestored = true;
+            RestoreSystem();
+            Application.Exit();
+        }
+    }
+
+    private void RestoreSystem()
+    {
+        try
+        {
+            // Show desktop icons
+            Microsoft.Win32.Registry.SetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+                "HideIcons",
+                0);
+            
+            // Re-enable the desktop
+            Microsoft.Win32.Registry.SetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+                "NoDesktop",
+                0);
+
+            // Download and set a "normal" wallpaper
+            string imageUrl = "https://wallpapercave.com/wp/wp10128604.jpg";
+            string imagePath = Environment.GetEnvironmentVariable("USERPROFILE") + "\\Downloads\\normal.jpg";
+            using (var client = new System.Net.WebClient())
+            {
+                client.DownloadFile(imageUrl, imagePath);
+            }
+            Win32.SystemParametersInfo(0x0014, 0, imagePath, 0x01 | 0x02);
+
+            // Show taskbar
+            string regPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3";
+            using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(regPath, true))
+            {
+                if (key != null)
+                {
+                    byte[] settings = (byte[])key.GetValue("Settings");
+                    settings[8] = 2;  // 2 => show taskbar
+                    key.SetValue("Settings", settings);
+                }
+            }
+
+            // Restart Explorer to apply changes
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName("explorer"))
+            {
+                process.Kill();
+            }
+            System.Diagnostics.Process.Start("explorer.exe");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error during restoration: " + ex.Message);
+        }
+    }
+}
+'@
+
+Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
+
+function Do-Prank {
+    # Kill specific Wallpaper Engine processes
+    $processNames = @(
+        "wallpaper64",
+        "wallpaper32",
+        "webwallpaper64",
+        "webwallpaper32",
+        "wallpaperservice32"
+    )
+
+    foreach ($processName in $processNames) {
+        Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 2
 
     # Hide desktop icons
-    Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value 1
+    $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+    Set-ItemProperty -Path $Path -Name "HideIcons" -Value 1
 
-    # Disable the desktop
-    Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value 1
+    # Disable desktop
+    $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    If (!(Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+    Set-ItemProperty -Path $Path -Name "NoDesktop" -Value 1
 
-    # Download a fake BSOD image
-    $fakeBSODUrl = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
-    $bsodImagePath = "$env:USERPROFILE\Downloads\fake_bsod.png"
-    try {
-        (New-Object System.Net.WebClient).DownloadFile($fakeBSODUrl, $bsodImagePath)
-    } catch {
-        Write-Host "Error downloading BSOD image: $($_.Exception.Message)"
-    }
+    # Download BSOD image
+    $imageUrl = "https://1.bp.blogspot.com/-fifVJfHz0-M/XDjD30_jWcI/AAAAAAAAAWM/HQ3Uv5ZHVCo37RbllK7v927DMYUl36TJgCLcBGAs/s1600/blue%2Bscreen%2Bof%2Bdeath%2Bwindow%2B10.png"
+    $imagePath = "$env:USERPROFILE\Downloads\bsod.png"
+    (New-Object System.Net.WebClient).DownloadFile($imageUrl, $imagePath)
 
-    # Set wallpaper to the fake BSOD
-    # SPI_SETDESKWALLPAPER = 0x14, SPIF_UPDATEINIFILE(0x1) + SPIF_SENDWININICHANGE(0x2)
-    [WinAPI]::SystemParametersInfo(0x14, 0, $bsodImagePath, 0x1 -bor 0x2) | Out-Null
+    # Set as wallpaper (0x14 = SPI_SETDESKWALLPAPER, 0x1|0x2 = SPIF_UPDATEINIFILE|SPIF_SENDWININICHANGE)
+    [Win32]::SystemParametersInfo(0x0014, 0, $imagePath, 0x01 -bor 0x02)
 
-    # Hide the taskbar via StuckRects3
-    # Typically byte index [8] = 3 => autohide/hide, 2 => normal
-    if ($originalStuckRects) {
-        $newStuckRects = New-Object byte[] ($originalStuckRects.Length)
-        $originalStuckRects.CopyTo($newStuckRects, 0)
-        $newStuckRects[8] = 3
-        Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $newStuckRects
-    } else {
-        # If not found, read the current, tweak it
-        $regKey = (Get-ItemProperty -Path $stuckRectsPath).Settings
-        $regKey[8] = 3
-        Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
-    }
+    # Hide taskbar
+    $RegPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
+    $RegKey = (Get-ItemProperty -Path $RegPath).Settings
+    $RegKey[8] = 3  # 3 => hide taskbar, 2 => show
+    Set-ItemProperty -Path $RegPath -Name Settings -Value $RegKey
 
-    # Restart Explorer to apply changes
+    # Restart explorer to apply changes
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer
-    Start-Sleep 1
 
-    # Force-minimize all visible windows using EnumWindows + ShowWindow(SW_MINIMIZE)
-    [WinAPI]::EnumWindows({
-        param($hWnd, $lParam)
+    # Wait 6 seconds and kill specific processes again if they relaunched
+    Start-Sleep -Seconds 6
+    foreach ($processName in $processNames) {
+        Stop-Process -Name $processName -Force -ErrorAction SilentlyContinue
+    }
 
-        if ([WinAPI]::IsWindowVisible($hWnd)) {
-            # 6 = SW_MINIMIZE
-            [WinAPI]::ShowWindow($hWnd, [WinAPI]::SW_MINIMIZE) | Out-Null
-        }
-        return $true
-    }, [IntPtr]::Zero)
+    # Minimize all windows
+    $shell = New-Object -ComObject "Shell.Application"
+    $shell.MinimizeAll()
 }
 
-###############################################################################
-# 3. DEFINE RESTORE FUNCTION
-###############################################################################
-function Restore-System {
-    Write-Host "`n--- RESTORING: Original wallpaper, icons, taskbar... ---`n"
+# 1) Execute the prank
+Do-Prank
 
-    try {
-        # Restore HideIcons
-        if ($originalHideIcons -ne $null) {
-            Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value $originalHideIcons
-        } else {
-            Set-ItemProperty -Path $hideIconsPath -Name "HideIcons" -Value 0
-        }
-
-        # Restore NoDesktop
-        if ($originalNoDesktop -ne $null) {
-            Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value $originalNoDesktop
-        } else {
-            Set-ItemProperty -Path $policiesPath -Name "NoDesktop" -Value 0
-        }
-
-        # Restore original wallpaper, if it still exists
-        if ($originalWallpaper -and (Test-Path $originalWallpaper)) {
-            [WinAPI]::SystemParametersInfo(0x14, 0, $originalWallpaper, 0x1 -bor 0x2) | Out-Null
-        }
-        else {
-            # Fallback to an online default or do nothing
-            Write-Host "Original wallpaper not found, using fallback..."
-            $fallbackUrl = "https://wallpapercave.com/wp/wp10128604.jpg" 
-            $fallbackPath = "$env:USERPROFILE\Downloads\restoredWallpaper.jpg"
-            (New-Object System.Net.WebClient).DownloadFile($fallbackUrl, $fallbackPath)
-            [WinAPI]::SystemParametersInfo(0x14, 0, $fallbackPath, 0x1 -bor 0x2) | Out-Null
-        }
-
-        # Restore taskbar
-        if ($originalStuckRects) {
-            Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $originalStuckRects
-        } else {
-            # If no original, default to '2' (show)
-            $regKey = (Get-ItemProperty -Path $stuckRectsPath).Settings
-            $regKey[8] = 2
-            Set-ItemProperty -Path $stuckRectsPath -Name Settings -Value $regKey
-        }
-
-        # Restart Explorer
-        Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
-        Start-Process explorer
-
-        Write-Host "Restore complete."
-    }
-    catch {
-        Write-Host "Error during restoration: $($_.Exception.Message)"
-    }
-}
-
-###############################################################################
-# 4. RUN THE PRANK
-###############################################################################
-Invoke-Prank
-
-###############################################################################
-# 5. WAIT FOR MOUSE MOVEMENT, THEN RESTORE
-###############################################################################
-Write-Host "Prank active. Move your mouse to restore..."
-
-Add-Type -AssemblyName System.Windows.Forms  # for Cursor/MousePosition
-$oldPos = [System.Windows.Forms.Cursor]::Position
-
-while ($true) {
-    Start-Sleep -Milliseconds 500
-    $newPos = [System.Windows.Forms.Cursor]::Position
-    if (($newPos.X -ne $oldPos.X) -or ($newPos.Y -ne $oldPos.Y)) {
-        # Mouse moved
-        Restore-System
-        break
-    }
-}
+# 2) Start the mouse-listening form to restore on movement
+$form = New-Object MouseHandler
+[System.Windows.Forms.Application]::Run($form)
